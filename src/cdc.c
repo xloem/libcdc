@@ -70,7 +70,7 @@ static int cdc_usb_endpoints_internal (struct cdc_ctx *cdc, libusb_device *dev, 
 
     for (int c = 0; c < desc.bNumConfigurations; c ++) {
         struct libusb_config_descriptor *config;
-        cdc_check(libusb_get_config_descriptor(dev, 0, &config), "libusb_get_config_descriptor");
+        cdc_check(libusb_get_config_descriptor(dev, c, &config), "libusb_get_config_descriptor");
         for (int i = 0; i < config->bNumInterfaces; i ++) {
             struct libusb_interface const *interface = &config->interface[i];
             for (int a = 0; a < interface->num_altsetting; a ++) {
