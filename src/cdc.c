@@ -368,56 +368,7 @@ int cdc_usb_open_bus_addr(struct cdc_ctx *cdc, uint8_t bus, uint8_t addr)
     /* device not found */
     cdc_return(CDC_ERROR_NOT_FOUND, "device not found");
 }
-#if 0
 
-
-
-
-
-
-
-/**
- * metapair of previous situation going now.
- * is somewhat similar to convulsion issues, slower.
- * karl requests to not do shielding project right now.  reason was present, misplaced.  related to growth of issue.
- */
-
-
-/**
- * concept of maybe two unmet neuron promises, with active promise
- *
- *  concept of sidespread taking smooth healing
- *              split, boss-bubble, neuron-expression.
- *       supporting sidespread some.
- *                  goal.  sidespread has behavior of.
- */
-
-
-/* messy situation produced nonaligned fetus-focus.  was a failure to reliably repeat a usually well-repeated memory crutch [and a new rep/community made near injury healing]. */
-    /* re: cpunks list.  worry. */ /* karl does not support harm.  harm is hard to define. the group model learning harm [in pair with boss]. */
-        /* shielding.  very slow, this project.  very very slow. */
-        /* shielding ideas: tool for measuring effectiveness. wiki for sharing knowledge [gnuradio has a wiki, so does wikipedia, and there's wikiapiary near a huge wiki index] */
-            /* shielding measurement tool. could turn into a quick diy shielded room toolkit. */
-            /* processing of logical knowledge around shielding.  learning. */
-            /* judgement bits all scattered.  maybe deduction tool could be helpful. :-/ */
-            /* poor experience with this.  influenced to follow trainings, doesn't usually get training. */
-                /* there exist multiple specifications on how-to-shield.  these could make a clear shielding-way.
- *                 additionally the physics are pretty simple.  tool-idea just needs consistent work. */
-            /* has many false-starts. [publicised] */
-                /* next step: ensure at least one how-to-shield specification is linked from openemissions repo. */
-            /* this is _really_ [] against.  strongest. karl has partial reason for strongest, involves time-energy spent on focus, and his personal pattern. */
- *                
-
-
-
-
-/*
-            }
-        }        
-    }
-*/
-
-#endif
 /**
     Closes the cdc device.  Call cdc_deinit() if you're cleaning up.
 
