@@ -20,21 +20,28 @@
 #include <libusb.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "cdc.h"
 #include "cdc_version_i.h"
 
-#define cdc_check(code, str, ...)         \
-    do {                                  \
-        int __code = (code);              \
-        if (__code < 0) {                 \
-            if (cdc) {                    \
-                cdc->error_str = (str);   \
-                cdc->error_code = __code; \
-                __VA_ARGS__;              \
-            }                             \
-            return __code;                \
-        }                                 \
+#define cdc_return(code, str, ...) \
+    if (cdc) {                     \
+        cdc->error_str = (str);    \
+        cdc->error_code = (code);  \
+        __VA_ARGS__;               \
+        return cdc->error_code;    \
+    } else {                       \
+        return (code);             \
+    }
+
+#define cdc_check(code, str, ...)    \
+    do {                             \
+        int __code = (code);         \
+        if (__code < 0) {            \
+            cdc_return(__code, str,  \
+                       __VA_ARGS__); \
+        }                            \
     } while(0);
 
 /**
@@ -212,6 +219,206 @@ int cdc_usb_open_dev(struct cdc_ctx *cdc, libusb_device *dev)
 }
 
 /**
+    Opens the first device with given vendor and product ids.
+
+    \param cdc pointer to cdc_ctx
+    \param vendor Vendor ID
+    \param product Product ID
+
+    \return CDC_SUCCESS on success or CDC_ERROR code on failure
+*/
+int cdc_usb_open(struct cdc_ctx *cdc, int vendor, int product)
+{
+    return cdc_usb_open_desc(cdc, vendor, product, NULL, NULL);
+}
+
+/**
+    Opens the first device with a given vendor id, product id,
+    description and serial.
+
+    \param cdc pointer to cdc_ctx
+    \param vendor Vendor ID
+    \param product Product ID
+    \param description Description to search for.  Use NULL if not needed.
+    \param serial Serial to search for.  Use NULL if not needed.
+
+    \return CDC_SUCCESS on success or CDC_ERROR code on failure
+*/
+int cdc_usb_open_desc(struct cdc_ctx *cdc, int vendor, int product,
+                      char const *description, char const *serial)
+{
+    return cdc_usb_open_desc_index(cdc,vendor,product,description,serial,0);
+}
+
+/**
+    Opens the index-th device with a given, vendor id, product id,
+    description and serial.
+
+    \param cdc pointer to cdc_ctx
+    \param vendor Vendor ID
+    \param product Product ID
+    \param description Description to search for.  Use NULL if not needed.
+    \param serial Serial to search for.  Use NULL if not needed.
+    \param index Number of matching device to open if there are more than one, starts with 0.
+
+    \return CDC_SUCCESS on success or CDC_ERROR code on failure
+*/
+int cdc_usb_open_desc_index(struct cdc_ctx *cdc, int vendor, int product,
+                            char const *description, char const *serial, unsigned int index)
+{
+    libusb_device *dev;
+    libusb_device **devs;
+    char string[256];
+    int i = 0;
+
+    cdc_check(cdc ? CDC_SUCCESS : CDC_ERROR_INVALID_PARAM, "struct cdc_ctx *cdc");
+
+    cdc_check(libusb_get_device_list(cdc->usb_ctx, &devs), "libusb_get_device_list");
+
+    while ((dev = devs[i++]) != NULL) {
+        struct libusb_device_descriptor desc;
+        int res;
+
+        cdc_check(
+            libusb_get_device_descriptor(dev, &desc),
+            "libusb_get_device_descriptor", 
+            libusb_free_device_list(devs,1)
+        );
+
+        if (desc.idVendor == vendor && desc.idProduct == product)
+        {
+            cdc_check(
+                libusb_open(dev, &cdc->usb_dev),
+                "usb_open", 
+                libusb_free_device_list(devs,1)
+            );
+
+            if (description != NULL) {
+                cdc_check(
+                    libusb_get_string_descriptor_ascii(cdc->usb_dev, desc.iProduct, (unsigned char *)string, sizeof(string)),
+                    "libusb_get_string_descriptor_ascii product description",
+                    libusb_free_device_list(devs,1)
+                );
+
+                if (strncmp(string, description, sizeof(string)) != 0) {
+                    cdc_usb_close_internal(cdc);
+                    continue;
+                }                                             
+
+            }
+            if(serial != NULL) {
+                cdc_check(
+                    libusb_get_string_descriptor_ascii(cdc->usb_dev, desc.iSerialNumber, (unsigned char *)string, sizeof(string)),
+                    "libusb_get_string_descriptor_ascii serial number",
+                    libusb_free_device_list(devs,1)
+                );
+                if (strncmp(string, serial, sizeof(string)) != 0)
+                {
+                    cdc_usb_close_internal(cdc);
+                    continue;
+                }
+            }
+
+            cdc_usb_close_internal(cdc);
+
+            if (index > 0) {
+                index --;
+                continue;
+            }
+
+            res = cdc_usb_open_dev(cdc, dev);
+            libusb_free_device_list(devs,1);
+            return res;
+        }
+    }
+
+    /* device not found */
+    cdc_return(CDC_ERROR_NOT_FOUND, "device not found");
+}
+
+/**
+    Opens the device at a given USB bus and device address.
+
+    \param cdc pointer to cdc_ctx
+    \param bus Bus number
+    \param addr Device address
+
+    \return CDC_SUCCESS on success or CDC_ERROR code on failure
+*/
+int cdc_usb_open_bus_addr(struct cdc_ctx *cdc, uint8_t bus, uint8_t addr)
+{
+    libusb_device *dev;
+    libusb_device **devs;
+    
+    int i = 0;
+
+    cdc_check(cdc ? CDC_SUCCESS : CDC_ERROR_INVALID_PARAM, "struct cdc_ctx *cdc");
+
+    cdc_check(libusb_get_device_list(cdc->usb_ctx, &devs), "libusb_get_device_list");
+
+    while ((dev = devs[i++]) != NULL) {
+        if (libusb_get_bus_number(dev) == bus && libusb_get_device_address(dev) == addr) {
+            int res;
+            res = cdc_usb_open_dev(cdc, dev);
+            libusb_free_device_list(devs,1);
+            return res;
+        }
+    }
+
+    /* device not found */
+    cdc_return(CDC_ERROR_NOT_FOUND, "device not found");
+}
+#if 0
+
+
+
+
+
+
+
+/**
+ * metapair of previous situation going now.
+ * is somewhat similar to convulsion issues, slower.
+ * karl requests to not do shielding project right now.  reason was present, misplaced.  related to growth of issue.
+ */
+
+
+/**
+ * concept of maybe two unmet neuron promises, with active promise
+ *
+ *  concept of sidespread taking smooth healing
+ *              split, boss-bubble, neuron-expression.
+ *       supporting sidespread some.
+ *                  goal.  sidespread has behavior of.
+ */
+
+
+/* messy situation produced nonaligned fetus-focus.  was a failure to reliably repeat a usually well-repeated memory crutch [and a new rep/community made near injury healing]. */
+    /* re: cpunks list.  worry. */ /* karl does not support harm.  harm is hard to define. the group model learning harm [in pair with boss]. */
+        /* shielding.  very slow, this project.  very very slow. */
+        /* shielding ideas: tool for measuring effectiveness. wiki for sharing knowledge [gnuradio has a wiki, so does wikipedia, and there's wikiapiary near a huge wiki index] */
+            /* shielding measurement tool. could turn into a quick diy shielded room toolkit. */
+            /* processing of logical knowledge around shielding.  learning. */
+            /* judgement bits all scattered.  maybe deduction tool could be helpful. :-/ */
+            /* poor experience with this.  influenced to follow trainings, doesn't usually get training. */
+                /* there exist multiple specifications on how-to-shield.  these could make a clear shielding-way.
+ *                 additionally the physics are pretty simple.  tool-idea just needs consistent work. */
+            /* has many false-starts. [publicised] */
+                /* next step: ensure at least one how-to-shield specification is linked from openemissions repo. */
+            /* this is _really_ [] against.  strongest. karl has partial reason for strongest, involves time-energy spent on focus, and his personal pattern. */
+ *                
+
+
+
+
+/*
+            }
+        }        
+    }
+*/
+
+#endif
+/**
     Closes the cdc device.  Call cdc_deinit() if you're cleaning up.
 
     \param cdc pointer to cdc_ctx
@@ -358,8 +565,10 @@ int cdc_setdtr_rts(struct cdc_ctx *cdc, int dtr, int rts)
     \param cdc pointer to cdc_context
     \param buf string storage
     \param size length of storage
+
+    \return The passed storage buffer containing error string
 */
-void cdc_get_error_string(struct cdc_ctx *cdc, char *buf, int size)
+char *cdc_get_error_string(struct cdc_ctx *cdc, char *buf, int size)
 {
     char const * ctx;
     int code;
@@ -371,6 +580,7 @@ void cdc_get_error_string(struct cdc_ctx *cdc, char *buf, int size)
         code = cdc->error_code;
     }
     snprintf(buf, size, "%s %s %s", ctx, libusb_error_name(code), libusb_strerror(code));
+    return buf;
 }
 
 /* @} end of doxygen libftdi group */

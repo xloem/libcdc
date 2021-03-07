@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <stdint.h>
+
 /** Parity mode for cdc_set_line_coding()
     These are the same as the libftdi parity types.
 */
@@ -110,6 +112,17 @@ enum cdc_error {
 };
 
 /**
+    \brief list of usb devices created by cdc_usb_find_all()
+*/
+struct cdc_device_list
+{
+    /** pointer to next entry */
+    struct ftdi_device_list *next;
+    /** pointer to libusb's usb_device */
+    struct libusb_device *dev;
+};
+
+/**
     Provide libcdc version information
     major: Library major version
     minor: Library minor version
@@ -133,26 +146,35 @@ extern "C"
 
     int cdc_init(struct cdc_ctx *cdc);
     struct cdc_ctx *cdc_new(void);
-
+    
     void cdc_deinit(struct cdc_ctx *cdc);
     void cdc_free(struct cdc_ctx *cdc);
     void cdc_set_usbdev (struct cdc_ctx *cdc, struct libusb_device_handle *usb);
-
+    
     struct cdc_version_info cdc_get_library_version(void);
-
+    
+    int cdc_usb_open(struct cdc_ctx *cdc, int vendor, int product);
     int cdc_usb_open_dev(struct cdc_ctx *cdc, struct libusb_device *dev);
+    int cdc_usb_open_desc(struct cdc_ctx *cdc, int vendor, int product,
+                          char const *description, char const *serial);
+    int cdc_usb_open_desc_index(struct cdc_ctx *cdc, int vendor, int product,
+                                char const *description, char const *serial, unsigned int index);
+    int cdc_usb_open_bus_addr(struct cdc_ctx *cdc, uint8_t bus, uint8_t addr);
+    int cdc_usb_open_dev(struct cdc_ctx *cdc, struct libusb_device *dev);
+    int cdc_usb_open_string(struct cdc_ctx *cdc, char const *description);
+    
     int cdc_usb_close(struct cdc_ctx *cdc);
-
+    
     int cdc_set_line_coding(struct cdc_ctx *cdc, int baudrate,
                             enum cdc_bits_type bits, enum cdc_stopbits_type sbit,
                             enum cdc_parity_type parity);
-
+    
     int cdc_read_data(struct cdc_ctx *cdc, unsigned char *buf, int size);
     int cdc_write_data(struct cdc_ctx *cdc, unsigned char *buf, int size);
-
+    
     int cdc_setdtr_rts(struct cdc_ctx *cdc, int dtr, int rts);
-
-    void cdc_get_error_string(struct cdc_ctx *cdc, char *buf, int size);
+    
+    char *cdc_get_error_string(struct cdc_ctx *cdc, char *buf, int size);
 
 #ifdef __cplusplus
 }
