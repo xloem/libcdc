@@ -98,17 +98,17 @@ enum cdc_error {
     /** Pipe error */
     CDC_ERROR_PIPE = -9,
 
-	/** System call interrupted (perhaps due to signal) */
-	CDC_ERROR_INTERRUPTED = -10,
+    /** System call interrupted (perhaps due to signal) */
+    CDC_ERROR_INTERRUPTED = -10,
 
-	/** Insufficient memory */
-	CDC_ERROR_NO_MEM = -11,
+    /** Insufficient memory */
+    CDC_ERROR_NO_MEM = -11,
 
-	/** Operation not supported or unimplemented on this platform */
-	CDC_ERROR_NOT_SUPPORTED = -12,
+    /** Operation not supported or unimplemented on this platform */
+    CDC_ERROR_NOT_SUPPORTED = -12,
 
-	/** Other error */
-	CDC_ERROR_OTHER = -99
+    /** Other error */
+    CDC_ERROR_OTHER = -99
 };
 
 /**
@@ -117,7 +117,7 @@ enum cdc_error {
 struct cdc_device_list
 {
     /** pointer to next entry */
-    struct ftdi_device_list *next;
+    struct cdc_device_list *next;
     /** pointer to libusb's usb_device */
     struct libusb_device *dev;
 };
@@ -152,6 +152,14 @@ extern "C"
     void cdc_set_usbdev (struct cdc_ctx *cdc, struct libusb_device_handle *usb);
     
     struct cdc_version_info cdc_get_library_version(void);
+
+    int cdc_usb_find_all(struct cdc_ctx *cdc, struct cdc_device_list **devlist,
+                         int vendor, int product);
+    void cdc_list_free(struct cdc_device_list **devlist);
+    int cdc_usb_get_strings(struct cdc_ctx *cdc, struct libusb_device *dev,
+                            char *manufacturer, int mnf_len,
+                            char *description, int desc_len,
+                            char *serial, int serial_len);
     
     int cdc_usb_open(struct cdc_ctx *cdc, int vendor, int product);
     int cdc_usb_open_dev(struct cdc_ctx *cdc, struct libusb_device *dev);

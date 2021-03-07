@@ -17,6 +17,7 @@
 /** \addtogroup libcdc */
 /* @{ */
 
+#include <errno.h>
 #include <libusb.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,7 +28,9 @@
 
 #define cdc_return(code, str, ...) \
     if (cdc) {                     \
-        cdc->error_str = (str);    \
+        if (str) {                 \
+            cdc->error_str = (str);\
+        }                          \
         cdc->error_code = (code);  \
         __VA_ARGS__;               \
         return cdc->error_code;    \
@@ -45,8 +48,74 @@
     } while(0);
 
 /**
+    Internal function to determine interfaces and endpoint addresses.
+    \internal
+
+    \param cdc pointer to cdc_ctx
+    \param dev usb device to probe
+    \param out_ep pointer to storage for out endpoint
+    \param in_ep pointer to storage for in endpoint
+    \param ctrl_iface pointer to storage for ctrl interface index
+    \param data_iface pointer to storage for data interface index
+    \param cfg_idx pointer to storage for configuration index
+
+    \return CDC_SUCCESS on success or CDC_ERROR code on failure
+*/
+static int cdc_usb_endpoints_internal (struct cdc_ctx *cdc, libusb_device *dev, int *out_ep, int *in_ep, int *ctrl_iface, int *data_iface, int *cfg_idx)
+{
+    struct libusb_device_descriptor desc;
+    cdc_check(dev ? CDC_SUCCESS : CDC_ERROR_INVALID_PARAM, "libusb_device *dev");
+
+    cdc_check(libusb_get_device_descriptor(dev, &desc), "libusb_get_device_descriptor");
+
+    for (int c = 0; c < desc.bNumConfigurations; c ++) {
+        struct libusb_config_descriptor *config;
+        cdc_check(libusb_get_config_descriptor(dev, 0, &config), "libusb_get_config_descriptor");
+        for (int i = 0; i < config->bNumInterfaces; i ++) {
+            struct libusb_interface const *interface = &config->interface[i];
+            for (int a = 0; a < interface->num_altsetting; a ++) {
+                struct libusb_interface_descriptor const *setting = &interface->altsetting[a];
+                if (setting->bInterfaceClass == 10 && setting->bNumEndpoints) {
+                    /* CDC Data interface */
+                    if (data_iface) {
+                        *data_iface = i;
+                    }
+                    if (ctrl_iface) {
+                        *ctrl_iface = i ^ 1;
+                    }
+                    if (cfg_idx) {
+                        *cfg_idx = c;
+                    }
+                    if (in_ep) {
+                        *in_ep = setting->endpoint[0].bEndpointAddress;
+                    }
+                    if (out_ep) {
+                        *out_ep = setting->endpoint[0].bEndpointAddress;
+                    }
+                    if (setting->bNumEndpoints > 1) {
+                        if (setting->endpoint[1].bEndpointAddress & 0x80) {
+                            if (out_ep) {
+                                *out_ep = setting->endpoint[1].bEndpointAddress;
+                            }
+                        } else {
+                            if (in_ep) {
+                                *in_ep = setting->endpoint[1].bEndpointAddress;
+                            }
+                        }
+                    }
+                    libusb_free_config_descriptor(config);
+                    return CDC_SUCCESS;
+                }
+            }
+        }
+        libusb_free_config_descriptor(config);
+    }
+    cdc_return(CDC_ERROR_NOT_FOUND, "cdc endpoints");
+}
+
+/**
     Internal function to close usb device pointer.
-    Set cdc->usb_dev to NULL.
+    Sets cdc->usb_dev to NULL.
     \internal
 
     \param cdc pointer to cdc_ctx
@@ -79,10 +148,6 @@ int cdc_init(struct cdc_ctx *cdc)
     cdc->usb_write_timeout = 5000;
     cdc->error_str = "cdc_init";
     cdc->module_detach_mode = AUTO_DETACH_CDC_MODULE;
-
-    /* get from lsusb -v */
-    cdc->out_ep = 0x83; /* reading */
-    cdc->in_ep = 0x02; /* writing */
 
     cdc_check(libusb_init(&cdc->usb_ctx), "libusb_init");
 
@@ -174,6 +239,160 @@ struct cdc_version_info cdc_get_library_version(void)
 }
 
 /**
+    Finds all CDC devices with given VID:PID on the usb bus.  Creates a new
+    cdc_device_list which needs to be deallocated by cdc_list_free() after
+    use.  With VID:PID 0:0, search for all CDC devices.
+
+    \param cdc pointer to cdc_ctx
+    \param devlist Pointer where to store list of found devices
+    \param vendor Vendor ID to search for
+    \param product Product ID to search for
+
+    \return CDC_SUCCESS on success or CDC_ERROR code on failure
+*/
+int cdc_usb_find_all(struct cdc_ctx *cdc, struct cdc_device_list **devlist, int vendor, int product)
+{
+    struct cdc_device_list **curdev;
+    libusb_device *dev;
+    libusb_device **devs;
+    int count = 0;
+    int i = 0;
+
+    cdc_check(libusb_get_device_list(cdc->usb_ctx, &devs), "libusb_get_device_list");
+
+    curdev = devlist;
+    *curdev = NULL;
+
+    while ((dev = devs[i++]) != NULL) {
+        if (!vendor && !product) {
+            int result = cdc_usb_endpoints_internal(cdc, dev, NULL, NULL, NULL, NULL, NULL);
+            if (result == CDC_ERROR_NOT_FOUND) {
+                continue;
+            }
+            cdc_check(result, NULL, libusb_free_device_list(devs,1));
+        } else {
+            struct libusb_device_descriptor desc;
+            cdc_check(
+                libusb_get_device_descriptor(dev, &desc),
+                "libusb_get_device_descriptor",
+                libusb_free_device_list(devs,1));
+            if (desc.idVendor != vendor || desc.idProduct != product) {
+                continue;
+            }
+        }
+
+        *curdev = (struct cdc_device_list*)malloc(sizeof(struct cdc_device_list));
+        if (!*curdev) {
+            cdc_return(CDC_ERROR_NO_MEM, "out of memory", libusb_free_device_list(devs,1));
+        }
+        (*curdev)->next = NULL;
+        (*curdev)->dev = dev;
+        libusb_ref_device(dev);
+        curdev = &(*curdev)->next;
+        count ++;
+    }
+    libusb_free_device_list(devs,1);
+    return count;
+}
+
+/**
+    Frees a usb device list.
+
+    \param devlist USB device list created by cdc_usb_find_all()
+*/
+void cdc_list_free(struct cdc_device_list **devlist)
+{
+    struct cdc_device_list *curdev, *next;
+
+    for (curdev = *devlist; curdev != NULL;)
+    {
+        next = curdev->next;
+        libusb_unref_device(curdev->dev);
+        free(curdev);
+        curdev = next;
+    }
+
+    *devlist = NULL;
+}
+
+/**
+    Return device ID strings from the usb device.
+
+    The parameters manufacturer, description and serial may be NULL
+    or pointer to buffers to store the fetched strings.
+
+    \note This version only closes the device if it was opened by it.
+
+    \param cdc pointer to cdc_ctx
+    \param dev libusb usb_dev to use
+    \param manufacturer Store manufacturer string here if not NULL
+    \param mnf_len Buffer size of manufacturer string
+    \param description Store product description string here if not NULL
+    \param desc_len Buffer size of product description string
+    \param serial Store serial string here if not NULL
+    \param serial_len Buffer size of serial string
+
+    \retval   0: all fine
+    \retval  -1: wrong arguments
+    \retval  -4: unable to open device
+    \retval  -7: get product manufacturer failed
+    \retval  -8: get product description failed
+    \retval  -9: get serial number failed
+    \retval -11: libusb_get_device_descriptor() failed
+*/
+int cdc_usb_get_strings(struct cdc_ctx *cdc, struct libusb_device *dev,
+                          char *manufacturer, int mnf_len,
+                          char *description, int desc_len,
+                          char *serial, int serial_len)
+{
+    struct libusb_device_descriptor desc;
+    char need_open;
+
+    cdc_check(cdc ? CDC_SUCCESS : CDC_ERROR_INVALID_PARAM, "struct cdc_ctx *cdc");
+    cdc_check(dev ? CDC_SUCCESS : CDC_ERROR_INVALID_PARAM, "struct libusb_device *dev");
+
+    need_open = (cdc->usb_dev == NULL);
+    if (need_open) {
+        cdc_check(libusb_open(dev, &cdc->usb_dev), "libusb_open");
+    }
+
+    cdc_check(libusb_get_device_descriptor(dev, &desc), "libusb_get_device_descriptor");
+
+    if (manufacturer != NULL)
+    {
+        cdc_check(
+            libusb_get_string_descriptor_ascii(cdc->usb_dev, desc.iManufacturer, (unsigned char *)manufacturer, mnf_len),
+            "libusb_get_string_descriptor_ascii manufacturer",
+            if (need_open) { cdc_usb_close_internal(cdc); }
+        );
+    }
+
+    if (description != NULL)
+    {
+        cdc_check(
+            libusb_get_string_descriptor_ascii(cdc->usb_dev, desc.iProduct, (unsigned char *)description, desc_len),
+            "libusb_get_string_descriptor_ascii product",
+            if (need_open) { cdc_usb_close_internal(cdc); }
+        );
+    }
+
+    if (serial != NULL)
+    {
+        cdc_check(
+            libusb_get_string_descriptor_ascii(cdc->usb_dev, desc.iSerialNumber, (unsigned char *)serial, serial_len),
+            "libusb_get_string_descriptor_ascii serial",
+            if (need_open) { cdc_usb_close_internal(cdc); }
+        );
+    }
+
+    if (need_open) {
+        cdc_usb_close_internal(cdc);
+    }
+
+    return 0;
+}
+
+/**
     Opens a cdc device given by a usb_device.
 
     \param cdc pointer to cdc_ctx
@@ -183,10 +402,10 @@ struct cdc_version_info cdc_get_library_version(void)
 */
 int cdc_usb_open_dev(struct cdc_ctx *cdc, libusb_device *dev)
 {
-    /*struct libusb_device_descriptor desc;
-    struct libusb_config_descriptor *config0;*/
+    int ctrl_iface, data_iface, cfg_idx, result, detach_errno = 0;
 
     cdc_check(cdc ? CDC_SUCCESS : CDC_ERROR_INVALID_PARAM, "struct cdc_ctx *cdc");
+    cdc_check(cdc_usb_endpoints_internal(cdc, dev, &cdc->out_ep, &cdc->in_ep, &ctrl_iface, &data_iface, &cfg_idx), NULL);
     cdc_check(libusb_open(dev, &cdc->usb_dev), "libusb_open");
 
     /* Try to detach cdc-acm module.
@@ -194,19 +413,31 @@ int cdc_usb_open_dev(struct cdc_ctx *cdc, libusb_device *dev)
        the Control interface and the Data interface.
        Note this might harmlessly fail.
      */
-    for (int if_num = 0; if_num < 2; if_num ++) {
-        if (cdc->module_detach_mode == AUTO_DETACH_CDC_MODULE) {
-            libusb_detach_kernel_driver(cdc->usb_dev, if_num);
-        } else if (cdc->module_detach_mode == AUTO_DETACH_REATTACH_CDC_MODULE) {
-            libusb_set_auto_detach_kernel_driver(cdc->usb_dev, if_num);
-        }
-        cdc_check(
-            libusb_claim_interface(cdc->usb_dev, if_num),
-            "libusb_claim_interface",
-            cdc_usb_close_internal(cdc)
-        );
+    if (cdc->module_detach_mode == AUTO_DETACH_CDC_MODULE) {
+        libusb_detach_kernel_driver(cdc->usb_dev, ctrl_iface);
+        libusb_detach_kernel_driver(cdc->usb_dev, data_iface);
+        detach_errno = errno;
+    } else if (cdc->module_detach_mode == AUTO_DETACH_REATTACH_CDC_MODULE) {
+        libusb_set_auto_detach_kernel_driver(cdc->usb_dev, ctrl_iface);
+        libusb_set_auto_detach_kernel_driver(cdc->usb_dev, data_iface);
+        detach_errno = errno;
     }
 
+    /* set configuration */
+    result = libusb_set_configuration(cdc->usb_dev, cfg_idx);
+    if (result < 0) {
+        if (detach_errno == EPERM) {
+            cdc_return(CDC_ERROR_ACCESS, "missing permissions to detach kernel module");
+        } else {
+            cdc_return(result, "libusb_set_configuration");
+        }
+    }
+
+    cdc_check(
+        libusb_claim_interface(cdc->usb_dev, data_iface),
+        "libusb_claim_interface",
+        cdc_usb_close_internal(cdc)
+    );
 
     /* Set line state to 9600 8N1 */
     cdc_check(
@@ -534,4 +765,4 @@ char *cdc_get_error_string(struct cdc_ctx *cdc, char *buf, int size)
     return buf;
 }
 
-/* @} end of doxygen libftdi group */
+/* @} end of doxygen libcdc group */
