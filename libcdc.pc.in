@@ -4,7 +4,7 @@ libdir=@libdir@
 includedir=@includedir@
 
 Name: libcdc
-Description: Library to program and control the FTDI USB controller
+Description: Library to use a CDC USB controller
 Requires: libusb-1.0
 Version: @VERSION@
 Libs: -L${libdir} -lcdc
