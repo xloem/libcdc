@@ -86,7 +86,7 @@ if(${WIN32})
 endif(${WIN32})
 
 configure_file(${CMAKE_SOURCE_DIR}/libcdc.pc.in ${CMAKE_BINARY_DIR}/libcdc.pc @ONLY)
-install(FILES ${CMAKE_BINARY_DIR}/libcdc.pc DESTINATION libs${LIB_SUFFIX}/pkgconfig)
+install(FILES ${CMAKE_BINARY_DIR}/libcdc.pc DESTINATION lib${LIB_SUFFIX}/pkgconfig)
 
 if(UNIX OR MINGW)
     configure_file( libcdc-config.in ${CMAKE_CURRENT_BINARY_DIR}/libcdc-config @ONLY)
