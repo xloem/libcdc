@@ -14,9 +14,15 @@
     You should have received a copy of the GNU Lesser General Public License
     along with libcdc.  If not, see <https://www.gnu.org/licenses/>.
 */
+/** \addtogroup libcdc */
+/* @{ */
 
 #include <libusb.h>
-#include <cdc.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "cdc.h"
+#include "cdc_version_i.h"
 
 #define cdc_check(code, str, ...)         \
     do {                                  \
@@ -28,6 +34,7 @@
                 __VA_ARGS__;              \
             }                             \
             return __code;                \
+        }                                 \
     } while(0);
 
 /**
@@ -64,7 +71,7 @@ int cdc_init(struct cdc_ctx *cdc)
     cdc->usb_read_timeout = 5000;
     cdc->usb_write_timeout = 5000;
     cdc->error_str = "cdc_init";
-    cd->module_detach_mode = AUTO_DETACH_CDC_MODULE;
+    cdc->module_detach_mode = AUTO_DETACH_CDC_MODULE;
 
     /* get from lsusb -v */
     cdc->out_ep = 0x83; /* reading */
@@ -76,7 +83,7 @@ int cdc_init(struct cdc_ctx *cdc)
 }
 
 /**
-    Allocate an dinitialize a new cdc_ctx
+    Allocate and initialise a new cdc_ctx
 
     \return a pointer to a new cdc_ctx, or NULL on failure
 */
@@ -169,9 +176,8 @@ struct cdc_version_info cdc_get_library_version(void)
 */
 int cdc_usb_open_dev(struct cdc_ctx *cdc, libusb_device *dev)
 {
-    struct libusb_device_descriptor desc;
-    struct libusb_config_descriptor *config0;
-    int result;
+    /*struct libusb_device_descriptor desc;
+    struct libusb_config_descriptor *config0;*/
 
     cdc_check(cdc ? CDC_SUCCESS : CDC_ERROR_INVALID_PARAM, "struct cdc_ctx *cdc");
     cdc_check(libusb_open(dev, &cdc->usb_dev), "libusb_open");
@@ -184,8 +190,8 @@ int cdc_usb_open_dev(struct cdc_ctx *cdc, libusb_device *dev)
     for (int if_num = 0; if_num < 2; if_num ++) {
         if (cdc->module_detach_mode == AUTO_DETACH_CDC_MODULE) {
             libusb_detach_kernel_driver(cdc->usb_dev, if_num);
-        } else if (cdc->module_detach_mode == AUTO_REATTACH_CDC_MODULE) {
-            libusb_set_auyto_detach_kernel_drivre(cdc->usb_dev, if_num);
+        } else if (cdc->module_detach_mode == AUTO_DETACH_REATTACH_CDC_MODULE) {
+            libusb_set_auto_detach_kernel_driver(cdc->usb_dev, if_num);
         }
         cdc_check(
             libusb_claim_interface(cdc->usb_dev, if_num),
@@ -225,7 +231,7 @@ int cdc_usb_close(struct cdc_ctx *cdc)
         }
     }
 
-    cdc_usb_close_internal (ftdi);
+    cdc_usb_close_internal (cdc);
 
     cdc_check(result, "libusb_release_interface");
     return CDC_SUCCESS;
@@ -244,17 +250,17 @@ int cdc_usb_close(struct cdc_ctx *cdc)
 */
 int cdc_set_line_coding(struct cdc_ctx *cdc, int baudrate,
                         enum cdc_bits_type bits, enum cdc_stopbits_type sbit,
-                        enum cdc_partity_type parity)
+                        enum cdc_parity_type parity)
 {
     cdc_check(cdc ? CDC_SUCCESS: CDC_ERROR_INVALID_PARAM, "struct cdc_ctx *cdc");
     cdc_check(cdc->usb_dev ? CDC_SUCCESS: CDC_ERROR_NO_DEVICE, "not opened");
 
-    uint8_t line_coding[7] = {
+    uint8_t coding[7] = {
         baudrate & 0xff,
         (baudrate >> 8) & 0xff,
         (baudrate >> 16) & 0xff,
         (baudrate >> 24) & 0xff,
-        sbits,
+        sbit,
         parity,   
         bits
     };
@@ -349,13 +355,13 @@ int cdc_setdtr_rts(struct cdc_ctx *cdc, int dtr, int rts)
 /**
     Produce a string representation for the last error code
 
-    \param ftdi pointer to ftdi_context
+    \param cdc pointer to cdc_context
     \param buf string storage
     \param size length of storage
 */
 void cdc_get_error_string(struct cdc_ctx *cdc, char *buf, int size)
 {
-    char * ctx;
+    char const * ctx;
     int code;
     if (cdc == NULL) {
         ctx = "struct cdc_ctx *cdc";
@@ -366,3 +372,5 @@ void cdc_get_error_string(struct cdc_ctx *cdc, char *buf, int size)
     }
     snprintf(buf, size, "%s %s %s", ctx, libusb_error_name(code), libusb_strerror(code));
 }
+
+/* @} end of doxygen libftdi group */

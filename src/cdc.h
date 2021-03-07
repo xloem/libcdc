@@ -21,17 +21,17 @@
     These are the same as the libftdi parity types.
 */
 enum cdc_parity_type { NONE=0, ODD=1, EVEN=2, MARK=3, SPACE=4 };
-/** Number of stop bits for cdc_set_line_code()
+/** Number of stop bits for cdc_set_line_coding()
     These are the same as the libftdi stop bits.
 */
 enum cdc_stopbits_type { STOP_BIT_1=0, STOP_BIT_15=1, STOP_BIT_2=2 };
-/** Number of bits for ftdi_set_line_coding()
+/** Number of bits for cdc_set_line_coding()
     These are a superset of the libftdi bits.
 */
 enum cdc_bits_type { BITS_5=5, BITS_6=6, BITS_7=7, BITS_8=8, BITS_16=16 };
 
 /** Automatic loading / unloading of kernel modules */
-enum ftdi_module_detach_mode
+enum cdc_module_detach_mode
 {
     AUTO_DETACH_CDC_MODULE = 0,
     DONT_DETACH_CDC_MODULE = 1,
@@ -41,7 +41,7 @@ enum ftdi_module_detach_mode
 struct cdc_ctx
 {
     /** libusb */
-    struct libusb_ctx *usb_ctx;
+    struct libusb_context *usb_ctx;
     struct libusb_device_handle *usb_dev;
 
     /** usb read timeout */
@@ -121,7 +121,7 @@ struct cdc_version_info
 {
     int major;
     int minor;
-    int microl
+    int micro;
     char const *version_str;
     char const *snapshot_str;
 };
@@ -136,16 +136,16 @@ extern "C"
 
     void cdc_deinit(struct cdc_ctx *cdc);
     void cdc_free(struct cdc_ctx *cdc);
-    void cdc_set_usbdev (struct cdc_ctx *cdc, libusb_device_handle *usb);
+    void cdc_set_usbdev (struct cdc_ctx *cdc, struct libusb_device_handle *usb);
 
     struct cdc_version_info cdc_get_library_version(void);
 
-    int cdc_usb_open_dev(struct cdc_ctx *cdc, libusb_device *dev);
+    int cdc_usb_open_dev(struct cdc_ctx *cdc, struct libusb_device *dev);
     int cdc_usb_close(struct cdc_ctx *cdc);
 
     int cdc_set_line_coding(struct cdc_ctx *cdc, int baudrate,
                             enum cdc_bits_type bits, enum cdc_stopbits_type sbit,
-                            enum cdc_partity_type parity);
+                            enum cdc_parity_type parity);
 
     int cdc_read_data(struct cdc_ctx *cdc, unsigned char *buf, int size);
     int cdc_write_data(struct cdc_ctx *cdc, unsigned char *buf, int size);

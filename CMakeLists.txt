@@ -26,8 +26,9 @@ if(${CMAKE_BUILD_TYPE} STREQUAL Debug)
 endif(${CMAKE_BUILD_TYPE} STREQUAL Debug)
 
 # find libusb
-find_package( USB1 REQUIRED )
-include_directories( ${LIBUSB_INCLUDE_DIR} )
+find_package( PkgConfig )
+pkg_check_modules( LIBUSB libusb-1.0 )
+include_directories( ${LIBUSB_INCLUDE_DIRS} )
 
 # guess LIB_SUFFIX, don't take debian multiarch into account
 if( NOT DEFINED LIB_SUFFIX )
