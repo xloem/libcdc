@@ -48,20 +48,18 @@
     } while(0);
 
 /**
-    Internal function to determine interfaces and endpoint addresses.
+    Internal function to find the interface descriptors for a device.
+    The found configuration descriptor must be freed via libusb.
     \internal
 
     \param cdc pointer to cdc_ctx
     \param dev usb device to probe
-    \param out_ep pointer to storage for out endpoint
-    \param in_ep pointer to storage for in endpoint
-    \param ctrl_iface pointer to storage for ctrl interface index
-    \param data_iface pointer to storage for data interface index
-    \param cfg_idx pointer to storage for configuration index
+    \param config_out pointer to storage for the configuration pointer
+    \param data_iface_out pointer to storage for the data interface descriptor pointer
 
     \return CDC_SUCCESS on success or CDC_ERROR code on failure
 */
-static int cdc_usb_endpoints_internal (struct cdc_ctx *cdc, libusb_device *dev, int *out_ep, int *in_ep, int *ctrl_iface, int *data_iface, int *cfg_idx)
+static int cdc_usb_desc_internal (struct cdc_ctx *cdc, libusb_device *dev, struct libusb_config_descriptor **config_out, struct libusb_interface_descriptor const **data_iface_out)
 {
     struct libusb_device_descriptor desc;
     cdc_check(dev ? CDC_SUCCESS : CDC_ERROR_INVALID_PARAM, "libusb_device *dev");
@@ -77,33 +75,14 @@ static int cdc_usb_endpoints_internal (struct cdc_ctx *cdc, libusb_device *dev, 
                 struct libusb_interface_descriptor const *setting = &interface->altsetting[a];
                 if (setting->bInterfaceClass == 10 && setting->bNumEndpoints) {
                     /* CDC Data interface */
-                    if (data_iface) {
-                        *data_iface = i;
+                    if (data_iface_out) {
+                        *data_iface_out = setting;
                     }
-                    if (ctrl_iface) {
-                        *ctrl_iface = i ^ 1;
+                    if (config_out) {
+                        *config_out = config;
+                    } else {
+                        libusb_free_config_descriptor(config);
                     }
-                    if (cfg_idx) {
-                        *cfg_idx = c;
-                    }
-                    if (in_ep) {
-                        *in_ep = setting->endpoint[0].bEndpointAddress;
-                    }
-                    if (out_ep) {
-                        *out_ep = setting->endpoint[0].bEndpointAddress;
-                    }
-                    if (setting->bNumEndpoints > 1) {
-                        if (setting->endpoint[1].bEndpointAddress & 0x80) {
-                            if (out_ep) {
-                                *out_ep = setting->endpoint[1].bEndpointAddress;
-                            }
-                        } else {
-                            if (in_ep) {
-                                *in_ep = setting->endpoint[1].bEndpointAddress;
-                            }
-                        }
-                    }
-                    libusb_free_config_descriptor(config);
                     return CDC_SUCCESS;
                 }
             }
@@ -265,7 +244,7 @@ int cdc_usb_find_all(struct cdc_ctx *cdc, struct cdc_device_list **devlist, int 
 
     while ((dev = devs[i++]) != NULL) {
         if (!vendor && !product) {
-            int result = cdc_usb_endpoints_internal(cdc, dev, NULL, NULL, NULL, NULL, NULL);
+            int result = cdc_usb_desc_internal(cdc, dev, NULL, NULL);
             if (result == CDC_ERROR_NOT_FOUND) {
                 continue;
             }
@@ -347,6 +326,7 @@ int cdc_usb_get_strings(struct cdc_ctx *cdc, struct libusb_device *dev,
 {
     struct libusb_device_descriptor desc;
     char need_open;
+    int result;
 
     cdc_check(cdc ? CDC_SUCCESS : CDC_ERROR_INVALID_PARAM, "struct cdc_ctx *cdc");
     cdc_check(dev ? CDC_SUCCESS : CDC_ERROR_INVALID_PARAM, "struct libusb_device *dev");
@@ -360,29 +340,26 @@ int cdc_usb_get_strings(struct cdc_ctx *cdc, struct libusb_device *dev,
 
     if (manufacturer != NULL)
     {
-        cdc_check(
-            libusb_get_string_descriptor_ascii(cdc->usb_dev, desc.iManufacturer, (unsigned char *)manufacturer, mnf_len),
-            "libusb_get_string_descriptor_ascii manufacturer",
-            if (need_open) { cdc_usb_close_internal(cdc); }
-        );
+        result = libusb_get_string_descriptor_ascii(cdc->usb_dev, desc.iManufacturer, (unsigned char *)manufacturer, mnf_len);
+        if (result < 0) {
+            snprintf(manufacturer, mnf_len, "%s %s", libusb_error_name(result), libusb_strerror(result));
+        }
     }
 
     if (description != NULL)
     {
-        cdc_check(
-            libusb_get_string_descriptor_ascii(cdc->usb_dev, desc.iProduct, (unsigned char *)description, desc_len),
-            "libusb_get_string_descriptor_ascii product",
-            if (need_open) { cdc_usb_close_internal(cdc); }
-        );
+        result = libusb_get_string_descriptor_ascii(cdc->usb_dev, desc.iProduct, (unsigned char *)description, desc_len);
+        if (result < 0) {
+            snprintf(description, desc_len, "%s %s", libusb_error_name(result), libusb_strerror(result));
+        }
     }
 
     if (serial != NULL)
     {
-        cdc_check(
-            libusb_get_string_descriptor_ascii(cdc->usb_dev, desc.iSerialNumber, (unsigned char *)serial, serial_len),
-            "libusb_get_string_descriptor_ascii serial",
-            if (need_open) { cdc_usb_close_internal(cdc); }
-        );
+        result = libusb_get_string_descriptor_ascii(cdc->usb_dev, desc.iSerialNumber, (unsigned char *)serial, serial_len);
+        if (result < 0) {
+            snprintf(serial, serial_len, "%s %s", libusb_error_name(result), libusb_strerror(result));
+        }
     }
 
     if (need_open) {
@@ -402,29 +379,45 @@ int cdc_usb_get_strings(struct cdc_ctx *cdc, struct libusb_device *dev,
 */
 int cdc_usb_open_dev(struct cdc_ctx *cdc, libusb_device *dev)
 {
-    int ctrl_iface, data_iface, cfg_idx, result, detach_errno = 0;
+    int config_num, result, detach_errno = 0;
+    struct libusb_config_descriptor *config;
+    struct libusb_interface_descriptor const *data_iface;
 
     cdc_check(cdc ? CDC_SUCCESS : CDC_ERROR_INVALID_PARAM, "struct cdc_ctx *cdc");
-    cdc_check(cdc_usb_endpoints_internal(cdc, dev, &cdc->out_ep, &cdc->in_ep, &ctrl_iface, &data_iface, &cfg_idx), NULL);
+
+    /* get values from descriptors */
+    cdc_check(cdc_usb_desc_internal(cdc, dev, &config, &data_iface), NULL);
+    config_num = config->bConfigurationValue;
+    cdc->data_if = data_iface->bInterfaceNumber;
+    cdc->in_ep = cdc->out_ep = data_iface->endpoint[0].bEndpointAddress;
+    if (data_iface->bNumEndpoints > 1) {
+        if (data_iface->endpoint[1].bEndpointAddress & 0x80) {
+            cdc->out_ep = data_iface->endpoint[1].bEndpointAddress;
+        } else {
+            cdc->in_ep = data_iface->endpoint[1].bEndpointAddress;
+        }
+    }
+    libusb_free_config_descriptor(config);
+
+
+    /* open device */
     cdc_check(libusb_open(dev, &cdc->usb_dev), "libusb_open");
 
-    /* Try to detach cdc-acm module.
-       The CDC-ACM Class defines two interfaces:
-       the Control interface and the Data interface.
-       Note this might harmlessly fail.
-     */
+    /* detach kernel module */
     if (cdc->module_detach_mode == AUTO_DETACH_CDC_MODULE) {
-        libusb_detach_kernel_driver(cdc->usb_dev, ctrl_iface);
-        libusb_detach_kernel_driver(cdc->usb_dev, data_iface);
+        for (int ifnum = 0; ifnum <= cdc->data_if + 1; ifnum ++) {
+            libusb_detach_kernel_driver(cdc->usb_dev, ifnum);
+        }
         detach_errno = errno;
     } else if (cdc->module_detach_mode == AUTO_DETACH_REATTACH_CDC_MODULE) {
-        libusb_set_auto_detach_kernel_driver(cdc->usb_dev, ctrl_iface);
-        libusb_set_auto_detach_kernel_driver(cdc->usb_dev, data_iface);
+        for (int ifnum = 0; ifnum <= cdc->data_if + 1; ifnum ++) {
+            libusb_set_auto_detach_kernel_driver(cdc->usb_dev, ifnum);
+        }
         detach_errno = errno;
     }
 
     /* set configuration */
-    result = libusb_set_configuration(cdc->usb_dev, cfg_idx);
+    result = libusb_set_configuration(cdc->usb_dev, config_num);
     if (result < 0) {
         if (detach_errno == EPERM) {
             cdc_return(CDC_ERROR_ACCESS, "missing permissions to detach kernel module");
@@ -433,8 +426,9 @@ int cdc_usb_open_dev(struct cdc_ctx *cdc, libusb_device *dev)
         }
     }
 
+    /* claim interface */
     cdc_check(
-        libusb_claim_interface(cdc->usb_dev, data_iface),
+        libusb_claim_interface(cdc->usb_dev, cdc->data_if),
         "libusb_claim_interface",
         cdc_usb_close_internal(cdc)
     );
@@ -609,20 +603,16 @@ int cdc_usb_open_bus_addr(struct cdc_ctx *cdc, uint8_t bus, uint8_t addr)
 */
 int cdc_usb_close(struct cdc_ctx *cdc)
 {
-    int result = 0;
-    
     cdc_check(cdc ? CDC_SUCCESS: CDC_ERROR_INVALID_PARAM, "struct cdc_ctx *cdc");
 
-    for (int if_num = 0; if_num < 2; if_num ++) {
-        result = libusb_release_interface(cdc->usb_dev, if_num);
-        if (result != CDC_SUCCESS) {
-            break;
-        }
-    }
+    cdc_check(
+        libusb_release_interface(cdc->usb_dev, cdc->data_if),
+        "libusb_release_interface",
+        cdc_usb_close_internal (cdc)
+    );
 
     cdc_usb_close_internal (cdc);
 
-    cdc_check(result, "libusb_release_interface");
     return CDC_SUCCESS;
 }
 

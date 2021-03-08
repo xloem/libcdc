@@ -51,7 +51,8 @@ struct cdc_ctx
     /** usb write teimout */
     int usb_write_timeout;
 
-    /** Device endpoint addresses */
+    /** Device addresses */
+    int data_if;
     int out_ep;
     int in_ep;
 
