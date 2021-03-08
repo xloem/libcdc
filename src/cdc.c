@@ -663,8 +663,13 @@ int cdc_set_line_coding(struct cdc_ctx *cdc, int baudrate,
 */
 int cdc_write_data(struct cdc_ctx *cdc, unsigned char *buf, int size)
 {
-    int actual_size = 0;
-    int result = libusb_bulk_transfer(cdc->usb_dev, cdc->in_ep, buf, size, &actual_size, cdc->usb_write_timeout);
+    int result, actual_size = 0;
+
+    if (size == 0) {
+        return CDC_SUCCESS;
+    }
+
+    result = libusb_bulk_transfer(cdc->usb_dev, cdc->in_ep, buf, size, &actual_size, cdc->usb_write_timeout);
 
     if (result == LIBUSB_ERROR_TIMEOUT && actual_size != 0) {
         result = LIBUSB_SUCCESS;
@@ -688,15 +693,22 @@ int cdc_write_data(struct cdc_ctx *cdc, unsigned char *buf, int size)
 */
 int cdc_read_data(struct cdc_ctx *cdc, unsigned char *buf, int size)
 {
-    int actual_size = 0;
-    int result = libusb_bulk_transfer(cdc->usb_dev, cdc->out_ep, buf, size, &actual_size, cdc->usb_read_timeout);
-    if (result == LIBUSB_ERROR_TIMEOUT && actual_size != 0) {
-        result = LIBUSB_SUCCESS;
+    int result, actual_size = 0;
+
+    if (size == 0) {
+        return CDC_SUCCESS;
     }
-    cdc_check(
-        result,
-        "libusb_bulk_transfer"
-    );
+
+    while (actual_size == 0) {
+        result = libusb_bulk_transfer(cdc->usb_dev, cdc->out_ep, buf, size, &actual_size, cdc->usb_read_timeout);
+        if (result == LIBUSB_ERROR_TIMEOUT && actual_size != 0) {
+            result = LIBUSB_SUCCESS;
+        }
+        cdc_check(
+            result,
+            "libusb_bulk_transfer"
+        );
+    }
     return actual_size;
 }
 
