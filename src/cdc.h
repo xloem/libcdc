@@ -51,6 +51,15 @@ struct cdc_ctx
     /** usb write teimout */
     int usb_write_timeout;
 
+    /** pointer to read buffer for cdc_read_data */
+    unsigned char *readbuffer;
+    /** read buffer offset */
+    unsigned char *readbuffer_offset;
+    /** number of remaining data in internal read buffer */
+    unsigned int readbuffer_remaining;
+    /** maximum packet size: also read buffer allocated size */
+    unsigned int max_packet_size;
+
     /** Device addresses */
     int data_if;
     int out_ep;

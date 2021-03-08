@@ -125,6 +125,11 @@ int cdc_init(struct cdc_ctx *cdc)
     cdc->usb_dev = NULL;
     cdc->usb_read_timeout = 5000;
     cdc->usb_write_timeout = 5000;
+
+    cdc->readbuffer = NULL;
+    cdc->readbuffer_offset = 0;
+    cdc->readbuffer_remaining = 0;
+    cdc->max_packet_size = 0;
     cdc->error_str = "cdc_init";
     cdc->module_detach_mode = AUTO_DETACH_CDC_MODULE;
 
@@ -165,6 +170,12 @@ void cdc_deinit(struct cdc_ctx *cdc)
     }
 
     cdc_usb_close_internal(cdc);
+
+    if (cdc->readbuffer != NULL)
+    {
+        free(cdc->readbuffer);
+        cdc->readbuffer = NULL;
+    }
 
     if (cdc->usb_ctx)
     {
@@ -390,9 +401,11 @@ int cdc_usb_open_dev(struct cdc_ctx *cdc, libusb_device *dev)
     config_num = config->bConfigurationValue;
     cdc->data_if = data_iface->bInterfaceNumber;
     cdc->in_ep = cdc->out_ep = data_iface->endpoint[0].bEndpointAddress;
+    cdc->max_packet_size = data_iface->endpoint[0].wMaxPacketSize;
     if (data_iface->bNumEndpoints > 1) {
         if (data_iface->endpoint[1].bEndpointAddress & 0x80) {
             cdc->out_ep = data_iface->endpoint[1].bEndpointAddress;
+            cdc->max_packet_size = data_iface->endpoint[1].wMaxPacketSize;
         } else {
             cdc->in_ep = data_iface->endpoint[1].bEndpointAddress;
         }
@@ -699,16 +712,38 @@ int cdc_read_data(struct cdc_ctx *cdc, unsigned char *buf, int size)
         return CDC_SUCCESS;
     }
 
-    while (actual_size == 0) {
-        result = libusb_bulk_transfer(cdc->usb_dev, cdc->out_ep, buf, size, &actual_size, cdc->usb_read_timeout);
-        if (result == LIBUSB_ERROR_TIMEOUT && actual_size != 0) {
-            result = LIBUSB_SUCCESS;
-        }
-        cdc_check(
-            result,
-            "libusb_bulk_transfer"
-        );
+    /** process any buffered data */
+    if (cdc->readbuffer_remaining > 0) {
+        actual_size = cdc->readbuffer_remaining > size ? size : cdc->readbuffer_remaining;
+        memcpy(buf, cdc->readbuffer_offset, actual_size);
+        cdc->readbuffer_remaining -= actual_size;
+        cdc->readbuffer_offset += actual_size;
+        return actual_size;
     }
+
+    if (size >= cdc->max_packet_size) {
+        /** if buf size is greater than packet size, read straight into buf */
+        result = libusb_bulk_transfer(cdc->usb_dev, cdc->out_ep, buf, size, &actual_size, cdc->usb_read_timeout);
+    } else {
+        /** otherwise, buffer a packet of data */
+        if (cdc->readbuffer == NULL) {
+            cdc->readbuffer = malloc(cdc->max_packet_size);
+        }
+        result = libusb_bulk_transfer(cdc->usb_dev, cdc->out_ep, cdc->readbuffer, cdc->max_packet_size, &actual_size, cdc->usb_read_timeout);
+        if (actual_size > size) {
+            cdc->readbuffer_remaining = actual_size - size;
+            cdc->readbuffer_offset = cdc->readbuffer + size;
+            actual_size = size;
+        }
+        memcpy(buf, cdc->readbuffer, actual_size);
+    }
+    if (result == LIBUSB_ERROR_TIMEOUT && actual_size != 0) {
+        result = LIBUSB_SUCCESS;
+    }
+    cdc_check(
+        result,
+        "libusb_bulk_transfer"
+    );
     return actual_size;
 }
 
